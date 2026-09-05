@@ -1,0 +1,18 @@
+{
+  "name": "akhustico-studio-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AKHUSTICO Studio - Cancionero Inteligente + Music Lab + Vocal Coach",
+  "scripts": {
+    "dev": "pnpm --filter @akhustico/web dev",
+    "build": "pnpm --filter @akhustico/music-core build && pnpm --filter @akhustico/shared build && pnpm --filter @akhustico/web build",
+    "test": "pnpm --filter \"@akhustico/*\" test",
+    "typecheck": "pnpm --filter \"@akhustico/*\" typecheck",
+    "lint": "pnpm --filter @akhustico/web lint",
+    "db:push": "pnpm --filter @akhustico/web db:push"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.2"
+  },
+  "packageManager": "pnpm@11.25.0"
+}

@@ -1,13 +1,13 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
-import { Play, Pause, Volume2, VolumeX, RotateCcw, FastForward } from "lucide-react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { FastForward, Pause, Play, RotateCcw } from "lucide-react";
 
 export interface StemChannel {
   id: string;
   name: string;
   url: string;
-  volume: number; // 0 a 100
+  volume: number;
   muted: boolean;
   solo: boolean;
 }
@@ -19,35 +19,64 @@ interface Props {
   onTimeUpdate?: (currentTimeMs: number) => void;
 }
 
-export const StemMixer: React.FC<Props> = ({
-  stems = {},
-  masterAudioUrl,
-  bpm = 120,
-  onTimeUpdate,
-}) => {
+const channelNames: Record<string, string> = {
+  vocals: "Voz",
+  guitar: "Guitarra",
+  bass: "Bajo",
+  drums: "Bateria",
+  piano: "Piano",
+  other: "Otros",
+  instrumental: "Instrumental",
+  master: "Master",
+};
+
+export const StemMixer: React.FC<Props> = ({ stems = {}, masterAudioUrl, bpm = 120, onTimeUpdate }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(120);
   const [playbackRate, setPlaybackRate] = useState(1.0);
   const [isLooping, setIsLooping] = useState(false);
-  const [masterVolume, setMasterVolume] = useState(85);
-
-  // Inicializar canales de stems disponibles dinámicamente
-  const [channels, setChannels] = useState<StemChannel[]>([
-    { id: "vocals", name: "Voz", url: "", volume: 90, muted: false, solo: false },
-    { id: "guitar", name: "Guitarra", url: "", volume: 85, muted: false, solo: false },
-    { id: "bass", name: "Bajo", url: "", volume: 80, muted: false, solo: false },
-    { id: "drums", name: "Batería", url: "", volume: 75, muted: false, solo: false },
-    { id: "other", name: "Otros", url: "", volume: 70, muted: false, solo: false },
-  ]);
-
+  const [channels, setChannels] = useState<StemChannel[]>([]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
-    if (audioRef.current) {
-      audioRef.current.playbackRate = playbackRate;
+    const nextChannels = Object.entries(stems)
+      .map(([id, asset]: [string, any]) => ({
+        id,
+        name: channelNames[id] || id,
+        url: asset?.blobPath || asset?.url || "",
+        volume: id === "master" ? 85 : 80,
+        muted: false,
+        solo: false,
+      }))
+      .filter((channel) => channel.url);
+
+    if (nextChannels.length === 0 && masterAudioUrl) {
+      nextChannels.push({
+        id: "master",
+        name: "Master",
+        url: masterAudioUrl,
+        volume: 85,
+        muted: false,
+        solo: false,
+      });
     }
+
+    setChannels(nextChannels);
+  }, [stems, masterAudioUrl]);
+
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.playbackRate = playbackRate;
   }, [playbackRate]);
+
+  const playbackUrl = useMemo(
+    () =>
+      masterAudioUrl ||
+      channels.find((channel) => channel.id === "master")?.url ||
+      channels[0]?.url ||
+      "https://assets.mixkit.co/music/preview/mixkit-guitar-acoustic-happy-energy-1111.mp3",
+    [channels, masterAudioUrl]
+  );
 
   const togglePlay = () => {
     if (!audioRef.current) return;
@@ -61,36 +90,27 @@ export const StemMixer: React.FC<Props> = ({
   };
 
   const handleSeek = (timeSec: number) => {
-    if (audioRef.current) {
-      audioRef.current.currentTime = timeSec;
-      setCurrentTime(timeSec);
-      onTimeUpdate?.(timeSec * 1000);
-    }
+    if (!audioRef.current) return;
+    audioRef.current.currentTime = timeSec;
+    setCurrentTime(timeSec);
+    onTimeUpdate?.(timeSec * 1000);
   };
 
   const toggleMute = (channelId: string) => {
-    setChannels((prev) =>
-      prev.map((c) => (c.id === channelId ? { ...c, muted: !c.muted } : c))
-    );
+    setChannels((prev) => prev.map((c) => (c.id === channelId ? { ...c, muted: !c.muted } : c)));
   };
 
   const toggleSolo = (channelId: string) => {
     setChannels((prev) => {
       const isCurrentlySolo = prev.find((c) => c.id === channelId)?.solo;
-      return prev.map((c) => ({
-        ...c,
-        solo: c.id === channelId ? !isCurrentlySolo : false,
-      }));
+      return prev.map((c) => ({ ...c, solo: c.id === channelId ? !isCurrentlySolo : false }));
     });
   };
 
   const updateVolume = (channelId: string, val: number) => {
-    setChannels((prev) =>
-      prev.map((c) => (c.id === channelId ? { ...c, volume: val } : c))
-    );
+    setChannels((prev) => prev.map((c) => (c.id === channelId ? { ...c, volume: val } : c)));
   };
 
-  // Formato mm:ss
   const formatTime = (secs: number) => {
     const mins = Math.floor(secs / 60);
     const s = Math.floor(secs % 60);
@@ -99,10 +119,9 @@ export const StemMixer: React.FC<Props> = ({
 
   return (
     <div className="bg-studio-surface border border-studio-border rounded-xl p-5 shadow-studio-card select-none space-y-5">
-      {/* Audio oculto sincronizado para reproducción general */}
       <audio
         ref={audioRef}
-        src={masterAudioUrl || "https://assets.mixkit.co/music/preview/mixkit-guitar-acoustic-happy-energy-1111.mp3"}
+        src={playbackUrl}
         loop={isLooping}
         onTimeUpdate={(e) => {
           const t = e.currentTarget.currentTime;
@@ -113,9 +132,7 @@ export const StemMixer: React.FC<Props> = ({
         onEnded={() => setIsPlaying(false)}
       />
 
-      {/* Master Transport Controls */}
       <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-studio-border">
-        {/* Playback & Seek */}
         <div className="flex items-center gap-3">
           <button
             type="button"
@@ -129,10 +146,10 @@ export const StemMixer: React.FC<Props> = ({
             <span className="text-studio-text font-bold text-sm">{formatTime(currentTime)}</span>
             <span className="mx-1">/</span>
             <span>{formatTime(duration)}</span>
+            <span className="ml-3 text-studio-dimmed">{Math.round(bpm)} BPM</span>
           </div>
         </div>
 
-        {/* Barra de progreso / Scrubbing */}
         <div className="flex-1 min-w-[200px] flex items-center gap-2">
           <input
             type="range"
@@ -145,15 +162,13 @@ export const StemMixer: React.FC<Props> = ({
           />
         </div>
 
-        {/* Speed & Loop Controls */}
         <div className="flex items-center gap-3 text-xs">
-          {/* Velocidad */}
           <div className="flex items-center gap-1 bg-studio-elevated px-2 py-1 rounded-lg border border-studio-border">
             <FastForward className="w-3.5 h-3.5 text-electric-400" />
             <select
               value={playbackRate}
               onChange={(e) => setPlaybackRate(parseFloat(e.target.value))}
-              aria-label="Velocidad de reproducción"
+              aria-label="Velocidad de reproduccion"
               className="bg-transparent text-studio-text font-mono focus:outline-none cursor-pointer"
             >
               <option value="0.5" className="bg-studio-surface">50%</option>
@@ -166,7 +181,6 @@ export const StemMixer: React.FC<Props> = ({
             </select>
           </div>
 
-          {/* Loop A/B */}
           <button
             type="button"
             onClick={() => setIsLooping(!isLooping)}
@@ -182,66 +196,69 @@ export const StemMixer: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* Canales Individuales de Stems */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 pt-2">
-        {channels.map((ch) => {
-          const anySoloActive = channels.some((c) => c.solo);
-          const isAudible = anySoloActive ? ch.solo : !ch.muted;
+      {channels.length === 0 ? (
+        <div className="rounded-lg border border-studio-border bg-studio-bg/40 p-4 text-sm text-studio-muted">
+          No hay pistas de audio disponibles para esta cancion.
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 pt-2">
+          {channels.map((ch) => {
+            const anySoloActive = channels.some((c) => c.solo);
+            const isAudible = anySoloActive ? ch.solo : !ch.muted;
 
-          return (
-            <div
-              key={ch.id}
-              className={`p-3 rounded-lg border transition-colors ${
-                isAudible
-                  ? "bg-studio-elevated/80 border-studio-borderHighlight"
-                  : "bg-studio-bg/40 border-studio-border/50 opacity-60"
-              }`}
-            >
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-bold text-studio-text font-mono truncate">{ch.name}</span>
-                <span className="text-[10px] text-studio-dimmed font-mono">{ch.volume}%</span>
+            return (
+              <div
+                key={ch.id}
+                className={`p-3 rounded-lg border transition-colors ${
+                  isAudible
+                    ? "bg-studio-elevated/80 border-studio-borderHighlight"
+                    : "bg-studio-bg/40 border-studio-border/50 opacity-60"
+                }`}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-studio-text font-mono truncate">{ch.name}</span>
+                  <span className="text-[10px] text-studio-dimmed font-mono">{ch.volume}%</span>
+                </div>
+
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={ch.volume}
+                  onChange={(e) => updateVolume(ch.id, parseInt(e.target.value, 10))}
+                  aria-label={`Volumen de ${ch.name}`}
+                  className="w-full h-1 bg-studio-bg rounded appearance-none cursor-pointer accent-electric-400 mb-3"
+                />
+
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => toggleMute(ch.id)}
+                    className={`flex-1 py-1 text-[10px] font-bold rounded transition-colors ${
+                      ch.muted
+                        ? "bg-pitch-outOfTune/20 text-pitch-outOfTune border border-pitch-outOfTune/40"
+                        : "bg-studio-surface text-studio-dimmed hover:text-studio-text border border-studio-border"
+                    }`}
+                  >
+                    MUTE
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => toggleSolo(ch.id)}
+                    className={`flex-1 py-1 text-[10px] font-bold rounded transition-colors ${
+                      ch.solo
+                        ? "bg-amber-500/20 text-amber-400 border border-amber-500/40"
+                        : "bg-studio-surface text-studio-dimmed hover:text-studio-text border border-studio-border"
+                    }`}
+                  >
+                    SOLO
+                  </button>
+                </div>
               </div>
-
-              {/* Slider de volumen vertical/horizontal */}
-              <input
-                type="range"
-                min="0"
-                max="100"
-                value={ch.volume}
-                onChange={(e) => updateVolume(ch.id, parseInt(e.target.value, 10))}
-                aria-label={`Volumen de ${ch.name}`}
-                className="w-full h-1 bg-studio-bg rounded appearance-none cursor-pointer accent-electric-400 mb-3"
-              />
-
-              {/* Botones Mute y Solo */}
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => toggleMute(ch.id)}
-                  className={`flex-1 py-1 text-[10px] font-bold rounded transition-colors ${
-                    ch.muted
-                      ? "bg-pitch-outOfTune/20 text-pitch-outOfTune border border-pitch-outOfTune/40"
-                      : "bg-studio-surface text-studio-dimmed hover:text-studio-text border border-studio-border"
-                  }`}
-                >
-                  MUTE
-                </button>
-                <button
-                  type="button"
-                  onClick={() => toggleSolo(ch.id)}
-                  className={`flex-1 py-1 text-[10px] font-bold rounded transition-colors ${
-                    ch.solo
-                      ? "bg-amber-500/20 text-amber-400 border border-amber-500/40"
-                      : "bg-studio-surface text-studio-dimmed hover:text-studio-text border border-studio-border"
-                  }`}
-                >
-                  SOLO
-                </button>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 };

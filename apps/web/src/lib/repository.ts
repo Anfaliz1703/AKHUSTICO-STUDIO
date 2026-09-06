@@ -1,9 +1,16 @@
-import { CanonicalSong, ProcessingJob } from "@akhustico/shared";
+import { CanonicalSong, ProcessingJob, SongAsset } from "@akhustico/shared";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { DEMO_SONGS } from "./demo-data";
 
 type AkhusticoMemoryStore = {
   songs: CanonicalSong[];
   jobs: ProcessingJob[];
+};
+
+type AkhusticoLocalDatabase = AkhusticoMemoryStore & {
+  schemaVersion: 1;
+  updatedAt: string;
 };
 
 type DatabaseContext = {
@@ -15,6 +22,9 @@ type DatabaseContext = {
 
 const globalStore = globalThis as typeof globalThis & {
   __akhusticoMemoryStore?: AkhusticoMemoryStore;
+  __akhusticoMemoryStoreLoaded?: boolean;
+  __akhusticoMemoryStoreLoading?: Promise<void>;
+  __akhusticoMemoryStoreWriteQueue?: Promise<void>;
 };
 
 const memoryStore =
@@ -24,6 +34,68 @@ const memoryStore =
     jobs: [],
   });
 
+const dataRoot =
+  process.env.AKHUSTICO_DATA_DIR ||
+  path.resolve(
+    process.cwd(),
+    process.cwd().endsWith(path.join("apps", "web")) ? "../.." : ".",
+    ".akhustico-data"
+  );
+const localDatabasePath = path.join(dataRoot, "akhustico.local.json");
+
+function isDatabaseEnabled() {
+  const databaseUrl = process.env.DATABASE_URL;
+  return Boolean(databaseUrl && databaseUrl.startsWith("postgres"));
+}
+
+async function loadMemoryStoreFromDisk() {
+  try {
+    const raw = await readFile(localDatabasePath, "utf8");
+    const parsed = JSON.parse(raw) as Partial<AkhusticoLocalDatabase>;
+    memoryStore.songs = Array.isArray(parsed.songs) ? parsed.songs : [];
+    memoryStore.jobs = Array.isArray(parsed.jobs) ? parsed.jobs : [];
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") {
+      console.error("AKHUSTICO local database read error:", err);
+      throw new Error(
+        `Local AKHUSTICO storage failed to load from ${localDatabasePath}. Check file permissions or remove the corrupted file after backing it up.`
+      );
+    }
+    await persistMemoryStore();
+  }
+}
+
+async function ensureMemoryStoreLoaded() {
+  if (isDatabaseEnabled() || globalStore.__akhusticoMemoryStoreLoaded) return;
+
+  globalStore.__akhusticoMemoryStoreLoading ??= loadMemoryStoreFromDisk().then(() => {
+    globalStore.__akhusticoMemoryStoreLoaded = true;
+  });
+
+  await globalStore.__akhusticoMemoryStoreLoading;
+}
+
+async function persistMemoryStore() {
+  if (isDatabaseEnabled()) return;
+
+  globalStore.__akhusticoMemoryStoreWriteQueue = (globalStore.__akhusticoMemoryStoreWriteQueue || Promise.resolve()).then(
+    async () => {
+      await mkdir(dataRoot, { recursive: true });
+      const payload: AkhusticoLocalDatabase = {
+        schemaVersion: 1,
+        updatedAt: new Date().toISOString(),
+        songs: memoryStore.songs,
+        jobs: memoryStore.jobs,
+      };
+      const tmpPath = `${localDatabasePath}.${process.pid}.tmp`;
+      await writeFile(tmpPath, JSON.stringify(payload, null, 2), "utf8");
+      await rename(tmpPath, localDatabasePath);
+    }
+  );
+
+  await globalStore.__akhusticoMemoryStoreWriteQueue;
+}
+
 function handleDatabaseError(operation: string, err: unknown): never {
   console.error(`AKHUSTICO database error during ${operation}:`, err);
   throw new Error(
@@ -32,8 +104,7 @@ function handleDatabaseError(operation: string, err: unknown): never {
 }
 
 async function getDatabaseContext(): Promise<DatabaseContext | null> {
-  const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl || !databaseUrl.startsWith("postgres")) {
+  if (!isDatabaseEnabled()) {
     return null;
   }
 
@@ -46,7 +117,54 @@ async function getDatabaseContext(): Promise<DatabaseContext | null> {
   }
 }
 
-function rowToSong(r: any): CanonicalSong {
+function assetRowsToRecord(rows: any[] = []): Record<string, SongAsset> {
+  return rows.reduce<Record<string, SongAsset>>((assets, row) => {
+    assets[row.stemType] = {
+      id: row.id,
+      songId: row.songId,
+      stemType: row.stemType,
+      blobPath: row.blobPath,
+      mimeType: row.mimeType,
+      duration: row.duration || undefined,
+      sampleRate: row.sampleRate || undefined,
+      channels: row.channels || undefined,
+      model: row.modelUsed || undefined,
+      createdAt: row.createdAt?.toISOString?.() || row.createdAt || undefined,
+    };
+    return assets;
+  }, {});
+}
+
+async function getSongAssets(database: DatabaseContext, songId: string): Promise<Record<string, SongAsset>> {
+  const rows = await database.db.query.songAssets.findMany({
+    where: database.eq(database.schema.songAssets.songId, songId),
+  });
+  return assetRowsToRecord(rows);
+}
+
+async function replaceSongAssets(database: DatabaseContext, song: CanonicalSong) {
+  await database.db.delete(database.schema.songAssets).where(database.eq(database.schema.songAssets.songId, song.id));
+
+  const assets = Object.values(song.assets || {});
+  if (assets.length === 0) return;
+
+  await database.db.insert(database.schema.songAssets).values(
+    assets.map((asset) => ({
+      id: asset.id,
+      songId: song.id,
+      stemType: asset.stemType,
+      blobPath: asset.blobPath,
+      mimeType: asset.mimeType,
+      duration: asset.duration,
+      sampleRate: asset.sampleRate,
+      channels: asset.channels,
+      modelUsed: asset.model,
+      createdAt: asset.createdAt ? new Date(asset.createdAt) : new Date(),
+    }))
+  );
+}
+
+function rowToSong(r: any, assets: Record<string, SongAsset> = {}): CanonicalSong {
   return {
     schemaVersion: "1.0",
     id: r.id,
@@ -80,7 +198,7 @@ function rowToSong(r: any): CanonicalSong {
     lastPracticedAt: r.lastPracticedAt?.toISOString(),
     lyrics: r.lyricsData || { sections: [] },
     melody: r.melodyTimeline || [],
-    assets: {},
+    assets,
     createdAt: r.createdAt?.toISOString(),
     updatedAt: r.updatedAt?.toISOString(),
   };
@@ -123,13 +241,15 @@ export const songRepository = {
         const rows = await db.query.songs.findMany({
           orderBy: [desc(schema.songs.updatedAt)],
         });
-        return rows.map(rowToSong);
+        return Promise.all(rows.map(async (row: any) => rowToSong(row, await getSongAssets(database, row.id))));
       } catch (err) {
         handleDatabaseError("song list", err);
       }
     }
 
-    // Filtrado en memoria
+    await ensureMemoryStoreLoaded();
+
+    // Filtrado en almacenamiento local
     let result = [...memoryStore.songs];
 
     if (filters?.search) {
@@ -171,13 +291,14 @@ export const songRepository = {
           where: eq(schema.songs.id, id),
         });
         if (row) {
-          return rowToSong(row);
+          return rowToSong(row, await getSongAssets(database, row.id));
         }
       } catch (err) {
         handleDatabaseError("song getById", err);
       }
     }
 
+    await ensureMemoryStoreLoaded();
     return memoryStore.songs.find((s) => s.id === id || s.slug === id) || null;
   },
 
@@ -189,11 +310,12 @@ export const songRepository = {
         const row = await db.query.songs.findFirst({
           where: eq(schema.songs.audioHash, audioHash),
         });
-        if (row) return this.getById(row.id);
+        if (row) return songRepository.getById(row.id);
       } catch (err) {
         handleDatabaseError("song getByHash", err);
       }
     }
+    await ensureMemoryStoreLoaded();
     return memoryStore.songs.find((s) => s.audioHash === audioHash) || null;
   },
 
@@ -224,13 +346,16 @@ export const songRepository = {
           melodyTimeline: song.melody,
           displaySettings: song.display,
         });
+        await replaceSongAssets(database, song);
         return song;
       } catch (err) {
         handleDatabaseError("song create", err);
       }
     }
 
+    await ensureMemoryStoreLoaded();
     memoryStore.songs.unshift(song);
+    await persistMemoryStore();
     return song;
   },
 
@@ -275,12 +400,14 @@ export const songRepository = {
             updatedAt: new Date(),
           })
           .where(eq(schema.songs.id, id));
+        await replaceSongAssets(database, merged);
         return merged;
       } catch (err) {
         handleDatabaseError("song update", err);
       }
     }
 
+    await ensureMemoryStoreLoaded();
     const existingIndex = memoryStore.songs.findIndex((s) => s.id === id);
     if (existingIndex !== -1) {
       const merged = {
@@ -291,6 +418,7 @@ export const songRepository = {
         updatedAt: new Date().toISOString(),
       };
       memoryStore.songs[existingIndex] = merged;
+      await persistMemoryStore();
       return merged;
     }
     return null;
@@ -307,9 +435,15 @@ export const songRepository = {
         handleDatabaseError("song delete", err);
       }
     }
+    await ensureMemoryStoreLoaded();
     const initialLen = memoryStore.songs.length;
     memoryStore.songs = memoryStore.songs.filter((s) => s.id !== id);
-    return memoryStore.songs.length < initialLen;
+    const deleted = memoryStore.songs.length < initialLen;
+    if (deleted) {
+      memoryStore.jobs = memoryStore.jobs.filter((j) => j.songId !== id);
+      await persistMemoryStore();
+    }
+    return deleted;
   },
 };
 
@@ -328,6 +462,7 @@ export const jobRepository = {
       }
     }
 
+    await ensureMemoryStoreLoaded();
     return memoryStore.jobs;
   },
 
@@ -345,6 +480,7 @@ export const jobRepository = {
       }
     }
 
+    await ensureMemoryStoreLoaded();
     return memoryStore.jobs.find((j) => j.id === id) || null;
   },
 
@@ -375,12 +511,14 @@ export const jobRepository = {
       }
     }
 
+    await ensureMemoryStoreLoaded();
     const existingIndex = memoryStore.jobs.findIndex((j) => j.id === job.id);
     if (existingIndex !== -1) {
       memoryStore.jobs[existingIndex] = job;
     } else {
       memoryStore.jobs.unshift(job);
     }
+    await persistMemoryStore();
     return job;
   },
 
@@ -416,9 +554,11 @@ export const jobRepository = {
       }
     }
 
+    await ensureMemoryStoreLoaded();
     const idx = memoryStore.jobs.findIndex((j) => j.id === id);
     if (idx !== -1) {
       memoryStore.jobs[idx] = { ...memoryStore.jobs[idx], ...updates };
+      await persistMemoryStore();
       return memoryStore.jobs[idx];
     }
     return null;

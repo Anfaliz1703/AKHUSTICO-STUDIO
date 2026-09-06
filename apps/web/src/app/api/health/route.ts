@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const isBlobConfigured = Boolean(process.env.BLOB_READ_WRITE_TOKEN);
   const workerUrl = process.env.AUDIO_WORKER_URL;
-  let databaseStatus = "in_memory_demo";
+  let databaseStatus = "local_file_demo";
 
   if (process.env.DATABASE_URL?.startsWith("postgres")) {
     try {

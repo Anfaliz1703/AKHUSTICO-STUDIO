@@ -71,6 +71,15 @@ cp .env.example .env
 ```
 En desarrollo local, `DEV_AUTH_BYPASS="true"` viene activado por defecto, permitiendo probar toda la funcionalidad sin requerir credenciales de Google OAuth ni base de datos de producción (usando el fallback de demostración).
 
+Sin `DATABASE_URL`, AKHUSTICO usa una base local persistente en `.akhustico-data/akhustico.local.json`. Eso conserva canciones, jobs, letra, acordes, melodía y assets demo entre reinicios del servidor local. Para cambiar la carpeta, define `AKHUSTICO_DATA_DIR`.
+
+Con `DATABASE_URL=postgres://...`, la app usa PostgreSQL/Neon mediante Drizzle. En ese modo no hace fallback silencioso: si la conexión falla, la API devuelve un error claro para corregir credenciales o ejecutar migraciones.
+
+Para preparar PostgreSQL:
+```bash
+pnpm db:push
+```
+
 ### 3. Compilar paquetes y ejecutar pruebas unitarias
 ```bash
 # Ejecutar suite de pruebas de teoría musical y transposición

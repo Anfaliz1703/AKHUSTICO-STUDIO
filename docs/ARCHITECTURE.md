@@ -2,7 +2,7 @@
 
 ## 1. Principios de Diseño
 1. **Desacoplamiento Estricto:** La UI web y la persistencia no deben conocer la implementación interna de los modelos de IA de audio.
-2. **Compatibilidad Serverless:** Todo el frontend y API ligera residen en Next.js optimizado para Vercel (Edge/Node Serverless), sin depender del sistema de archivos local para persistencia ni almacenar binarios pesados en la base de datos.
+2. **Compatibilidad Serverless:** Todo el frontend y API ligera residen en Next.js optimizado para Vercel (Edge/Node Serverless), sin depender del sistema de archivos local para persistencia en producción ni almacenar binarios pesados en la base de datos. En desarrollo sin `DATABASE_URL`, el fallback demo usa `.akhustico-data/akhustico.local.json` para no perder canciones entre reinicios locales.
 3. **Cero Payload Pesado en Vercel Functions:** La subida de audio se realiza directamente desde el navegador hacia **Vercel Blob** mediante URLs prefirmadas / client tokens.
 4. **Procesamiento Asíncrono por Jobs:** Las tareas intensivas de ML (separación de pistas, transcripción fonética, F0, acordes) se delegan al **Audio Worker** (Python/FastAPI) o proveedores externos vía el patrón Provider.
 5. **Determinismo Musical:** La transposición, el cálculo de acordes con cejilla (capo), el cálculo de cents y el scoring vocal se resuelven mediante lógica matemática pura en `packages/music-core`, nunca delegados a LLMs.
@@ -28,6 +28,7 @@ graph TD
     end
 
     subgraph StorageLayer [Persistencia]
+        LocalDB[(Local demo JSON - .akhustico-data)]
         NeonDB[(Neon Serverless PostgreSQL / Drizzle ORM)]
         BlobStorage[(Vercel Blob Storage - Private)]
     end
@@ -44,6 +45,7 @@ graph TD
     DirectUpload -->|2. Sube Audio Directo| BlobStorage
     UI -->|3. Registra Canción e Inicia Job| AppRouter
     AppRouter -->|4. Persiste Canción y Job| NeonDB
+    AppRouter -->|4b. Local sin DATABASE_URL| LocalDB
     AppRouter -->|5. Despacha Job Seguro con HMAC| WorkerGateway
     WorkerGateway -->|6. Descarga Audio Original| BlobStorage
     WorkerGateway -->|7. Ejecuta Pipeline Modular| StemsEngine

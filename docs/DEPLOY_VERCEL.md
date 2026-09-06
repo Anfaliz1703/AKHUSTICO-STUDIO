@@ -19,6 +19,7 @@ Configurar en el panel de Vercel (**Settings -> Environment Variables**):
 | Variable | Valor / Descripción |
 |---|---|
 | `DATABASE_URL` | String de conexión SSL de Neon PostgreSQL (`postgres://...`) |
+| `AKHUSTICO_DATA_DIR` | Solo desarrollo local. Carpeta alternativa para `.akhustico-data`; no usar como persistencia en Vercel. |
 | `AUTH_SECRET` | Secreto aleatorio seguro generado con `openssl rand -base64 32` |
 | `AUTH_GOOGLE_ID` | Client ID de Google OAuth |
 | `AUTH_GOOGLE_SECRET`| Client Secret de Google OAuth |

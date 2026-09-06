@@ -23,7 +23,7 @@ Este documento rige la ejecución sistemática de **AKHUSTICO Studio**. Se manti
 - [x] Definición de Agentes especializados en `.agents/agents/`.
 - [x] Configuración del Monorepo con pnpm workspaces (`apps/web`, `packages/shared`, `packages/music-core`, `services/audio-worker`).
 - [x] Implementación de `packages/music-core` con funciones puras y 20 tests exhaustivos (notas, MIDI, cents, transposición, capo, enarmonía).
-- [x] Configuración de Base de Datos PostgreSQL con Drizzle ORM y esquemas tipados (`songs`, `song_assets`, `processing_jobs`, `practice_sessions`, etc.) + In-Memory Fallback para desarrollo sin DB.
+- [x] Configuración de Base de Datos PostgreSQL con Drizzle ORM y esquemas tipados (`songs`, `song_assets`, `processing_jobs`, `practice_sessions`, etc.) + fallback local persistente en `.akhustico-data/akhustico.local.json` para desarrollo sin DB.
 - [x] Configuración de Autenticación centralizada (`requireOwner()`):
   - Google OAuth exclusivo para `OWNER_EMAIL` en producción.
   - Bypass controlado únicamente si `DEV_AUTH_BYPASS=true` explícito en desarrollo local / build local.
@@ -85,7 +85,7 @@ Este documento rige la ejecución sistemática de **AKHUSTICO Studio**. Se manti
     3. `isDevAuthBypassEnabled()`: Permite bypass **únicamente** si `DEV_AUTH_BYPASS="true"` está explícitamente establecido en el entorno local y `VERCEL_ENV !== "production"`. Nunca se activa por variables faltantes y queda completamente bloqueado en producción desplegada en Vercel.
     4. Se reemplazó la lógica duplicada en las 7 rutas API (`/api/songs`, `/api/songs/[id]`, `/api/songs/[id]/process`, `/api/songs/[id]/export`, `/api/songs/import`, `/api/jobs/[id]`, `/api/upload/token`).
   - **Verificación completa de API**: Probados los 11 endpoints del sistema con respuestas 200/201/202 válidas en JSON.
-- **Indicador visual DEMO MODE**: Añadido badge discreto animado en `AppHeader` que se activa únicamente cuando la base de datos opera en fallback en memoria.
+- **Indicador visual DEMO MODE**: Añadido badge discreto animado en `AppHeader` que se activa únicamente cuando la base de datos opera en fallback local demo.
 - **Transposición pura y normalización musical**:
   - `packages/music-core`: Soporta notas y tonalidades en español (`La menor` -> `Am`, `Do mayor` -> `C`, `Si bemol` -> `Bb`, `Fa sostenido menor` -> `F#m`).
   - 20 pruebas unitarias pasando al 100% incluyendo los requisitos obligatorios: `C +2 = D`, `Am +2 = Bm`, `F#m7 -2 = Em7`, `Bb +2 = C`, `C/G +2 = D/A`, `Bbmaj7 +1 = Bmaj7`, `Forma A + Capo 2 = B`, `Tono B con Capo 2 = Forma A`.

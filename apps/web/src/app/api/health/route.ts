@@ -1,6 +1,4 @@
 import { NextResponse } from "next/server";
-import { sql } from "drizzle-orm";
-import { db, isDatabaseConfigured } from "@/db";
 
 export const dynamic = "force-dynamic";
 
@@ -9,8 +7,10 @@ export async function GET() {
   const workerUrl = process.env.AUDIO_WORKER_URL;
   let databaseStatus = "in_memory_demo";
 
-  if (isDatabaseConfigured && db) {
+  if (process.env.DATABASE_URL?.startsWith("postgres")) {
     try {
+      const [{ db }, { sql }] = await Promise.all([import("@/db"), import("drizzle-orm")]);
+      if (!db) throw new Error("Database client was not initialized");
       await db.execute(sql`select 1`);
       databaseStatus = "healthy";
     } catch {

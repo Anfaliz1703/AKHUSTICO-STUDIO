@@ -1,11 +1,16 @@
 import { CanonicalSong, ProcessingJob } from "@akhustico/shared";
 import { DEMO_SONGS } from "./demo-data";
-import { db, schema, isDatabaseConfigured } from "@/db";
-import { eq, desc, ilike, and } from "drizzle-orm";
 
 type AkhusticoMemoryStore = {
   songs: CanonicalSong[];
   jobs: ProcessingJob[];
+};
+
+type DatabaseContext = {
+  db: NonNullable<(typeof import("@/db"))["db"]>;
+  schema: typeof import("@/db")["schema"];
+  eq: typeof import("drizzle-orm")["eq"];
+  desc: typeof import("drizzle-orm")["desc"];
 };
 
 const globalStore = globalThis as typeof globalThis & {
@@ -24,6 +29,21 @@ function handleDatabaseError(operation: string, err: unknown): never {
   throw new Error(
     `DATABASE_URL is configured, but PostgreSQL failed during ${operation}. Check Neon connectivity, credentials, and run pnpm --filter @akhustico/web db:push.`
   );
+}
+
+async function getDatabaseContext(): Promise<DatabaseContext | null> {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl || !databaseUrl.startsWith("postgres")) {
+    return null;
+  }
+
+  try {
+    const [{ db, schema }, { eq, desc }] = await Promise.all([import("@/db"), import("drizzle-orm")]);
+    if (!db) return null;
+    return { db, schema, eq, desc };
+  } catch (err) {
+    handleDatabaseError("database initialization", err);
+  }
 }
 
 function rowToSong(r: any): CanonicalSong {
@@ -96,7 +116,9 @@ export interface SongQueryFilters {
 
 export const songRepository = {
   async list(filters?: SongQueryFilters): Promise<CanonicalSong[]> {
-    if (isDatabaseConfigured && db) {
+    const database = await getDatabaseContext();
+    if (database) {
+      const { db, schema, desc } = database;
       try {
         const rows = await db.query.songs.findMany({
           orderBy: [desc(schema.songs.updatedAt)],
@@ -141,7 +163,9 @@ export const songRepository = {
   },
 
   async getById(id: string): Promise<CanonicalSong | null> {
-    if (isDatabaseConfigured && db) {
+    const database = await getDatabaseContext();
+    if (database) {
+      const { db, schema, eq } = database;
       try {
         const row = await db.query.songs.findFirst({
           where: eq(schema.songs.id, id),
@@ -158,7 +182,9 @@ export const songRepository = {
   },
 
   async getByHash(audioHash: string): Promise<CanonicalSong | null> {
-    if (isDatabaseConfigured && db) {
+    const database = await getDatabaseContext();
+    if (database) {
+      const { db, schema, eq } = database;
       try {
         const row = await db.query.songs.findFirst({
           where: eq(schema.songs.audioHash, audioHash),
@@ -172,7 +198,9 @@ export const songRepository = {
   },
 
   async create(song: CanonicalSong): Promise<CanonicalSong> {
-    if (isDatabaseConfigured && db) {
+    const database = await getDatabaseContext();
+    if (database) {
+      const { db, schema } = database;
       try {
         await db.insert(schema.songs).values({
           id: song.id,
@@ -207,8 +235,10 @@ export const songRepository = {
   },
 
   async update(id: string, updates: Partial<CanonicalSong>): Promise<CanonicalSong | null> {
-    if (isDatabaseConfigured && db) {
-      const existing = await this.getById(id);
+    const database = await getDatabaseContext();
+    if (database) {
+      const { db, schema, eq } = database;
+      const existing = await songRepository.getById(id);
       if (!existing) return null;
       const merged = {
         ...existing,
@@ -267,7 +297,9 @@ export const songRepository = {
   },
 
   async delete(id: string): Promise<boolean> {
-    if (isDatabaseConfigured && db) {
+    const database = await getDatabaseContext();
+    if (database) {
+      const { db, schema, eq } = database;
       try {
         await db.delete(schema.songs).where(eq(schema.songs.id, id));
         return true;
@@ -283,7 +315,9 @@ export const songRepository = {
 
 export const jobRepository = {
   async list(): Promise<ProcessingJob[]> {
-    if (isDatabaseConfigured && db) {
+    const database = await getDatabaseContext();
+    if (database) {
+      const { db, schema, desc } = database;
       try {
         const rows = await db.query.processingJobs.findMany({
           orderBy: [desc(schema.processingJobs.createdAt)],
@@ -298,7 +332,9 @@ export const jobRepository = {
   },
 
   async getById(id: string): Promise<ProcessingJob | null> {
-    if (isDatabaseConfigured && db) {
+    const database = await getDatabaseContext();
+    if (database) {
+      const { db, schema, eq } = database;
       try {
         const row = await db.query.processingJobs.findFirst({
           where: eq(schema.processingJobs.id, id),
@@ -313,7 +349,9 @@ export const jobRepository = {
   },
 
   async create(job: ProcessingJob): Promise<ProcessingJob> {
-    if (isDatabaseConfigured && db) {
+    const database = await getDatabaseContext();
+    if (database) {
+      const { db, schema } = database;
       try {
         await db.insert(schema.processingJobs).values({
           id: job.id,
@@ -347,8 +385,10 @@ export const jobRepository = {
   },
 
   async update(id: string, updates: Partial<ProcessingJob>): Promise<ProcessingJob | null> {
-    if (isDatabaseConfigured && db) {
-      const existing = await this.getById(id);
+    const database = await getDatabaseContext();
+    if (database) {
+      const { db, schema, eq } = database;
+      const existing = await jobRepository.getById(id);
       if (!existing) return null;
       const merged = { ...existing, ...updates };
 
